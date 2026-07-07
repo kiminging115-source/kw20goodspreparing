@@ -731,22 +731,62 @@ function fbsWriteOrders(rowsArr,fdate,cb){
   var CH=400,chunks=Math.ceil(rowsArr.length/CH)||0;
   var writes=[];
   for(var i=0;i<chunks;i++){writes.push(fbsSet('wms_orders','chunk_'+i,{data:JSON.stringify(rowsArr.slice(i*CH,(i+1)*CH))}));}
+  var ts=Date.now();
   Promise.all(writes.map(function(p){return p.catch(function(){});})).then(function(){
-    fbsSet('wms_meta','session',{fdate:fdate||'',chunks:chunks,ts:Date.now()}).then(function(){if(cb)cb(true);}).catch(function(){if(cb)cb(false);});
+    fbsSet('wms_meta','session',{fdate:fdate||'',chunks:chunks,ts:ts}).then(function(){if(cb)cb(true,ts);}).catch(function(){if(cb)cb(false,ts);});
   });
 }
 function fbsLoadOrders(cb){
   fetch(FBS_BASE+'wms_meta/session?key='+FBS_KEY).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(j){
-    var meta=fbsDec(j.fields),chunks=meta.chunks||0,fdate=meta.fdate||'';
-    if(!chunks){cb(null,fdate);return;}
+    var meta=fbsDec(j.fields),chunks=meta.chunks||0,fdate=meta.fdate||'',ts=meta.ts||0;
+    if(!chunks){cb(null,fdate,ts);return;}
     var parts=new Array(chunks),got=0,bad=false;
     for(var i=0;i<chunks;i++)(function(idx){
       fetch(FBS_BASE+'wms_orders/chunk_'+idx+'?key='+FBS_KEY).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(dj){
         try{parts[idx]=JSON.parse(fbsDec(dj.fields).data||'[]');}catch(e){parts[idx]=[];}
-        if(++got===chunks&&!bad)cb([].concat.apply([],parts),fdate);
-      }).catch(function(){if(!bad){bad=true;cb(null,fdate);}});
+        if(++got===chunks&&!bad)cb([].concat.apply([],parts),fdate,ts);
+      }).catch(function(){if(!bad){bad=true;cb(null,fdate,ts);}});
     })(i);
-  }).catch(function(){cb(null,'');});
+  }).catch(function(){cb(null,'',0);});
+}
+// session id (import timestamp) — used to reset device caches when a new file is imported
+function fbsGetSession(cb){
+  fetch(FBS_BASE+'wms_meta/session?key='+FBS_KEY).then(function(r){return r.ok?r.json():Promise.reject();})
+    .then(function(j){var m=fbsDec(j.fields);cb(m.ts||0,m.fdate||'');})
+    .catch(function(){cb(0,'');});
+}
+// list document ids of a collection
+function fbsListNames(coll,cb){
+  var out=[];
+  function page(tok){
+    var url=FBS_BASE+coll+'?key='+FBS_KEY+'&pageSize=300&mask.fieldPaths=__name__'+(tok?('&pageToken='+encodeURIComponent(tok)):'');
+    fetch(url).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(j){
+      (j.documents||[]).forEach(function(d){var p=d.name.split('/');out.push(p[p.length-1]);});
+      if(j.nextPageToken)page(j.nextPageToken);else cb(out);
+    }).catch(function(){cb(out);});
+  }
+  page(null);
+}
+// delete ALL docs in a collection (used when starting a new import session)
+function fbsWipe(coll,cb){
+  fbsListNames(coll,function(names){
+    if(!names.length){if(cb)cb();return;}
+    var i=0,inFlight=0,MAX=8;
+    function pump(){
+      while(inFlight<MAX&&i<names.length){
+        inFlight++;
+        (function(id){
+          fetch(FBS_BASE+coll+'/'+encodeURIComponent(id)+'?key='+FBS_KEY,{method:'DELETE'})
+            .catch(function(){}).then(function(){
+              inFlight--;
+              if(i>=names.length&&inFlight===0){if(cb)cb();}
+              else pump();
+            });
+        })(names[i++]);
+      }
+    }
+    pump();
+  });
 }
 
 
@@ -821,11 +861,26 @@ function doImport(){
         localStorage.setItem('gp_zones',JSON.stringify(zoneMap));
         localStorage.setItem('gp_fdate',fDate);
       }catch(e){}
-      // push order data to Firebase so the Zebra/phones get it automatically
-      fbsWriteOrders(rows,fDate,function(ok){
-        var el=document.getElementById('ciInfo');
-        if(el)el.innerHTML=(ok?'\u2601\ufe0f Synced to cloud \u2014 ':'\u26a0\ufe0f Cloud sync failed (offline?) \u2014 ')+el.innerHTML;
-      });
+      // NEW SESSION: importing a file resets the scan/adjust/roll history (all devices)
+      var resetHist=confirm('Import loaded '+rows.length+' rows.\n\nStart a NEW session and CLEAR all previous scan history (Scans / Adjusts / Rolls) on every device?\n\nOK = clear history (new day)\nCancel = keep history');
+      function pushOrders(){
+        fbsWriteOrders(rows,fDate,function(ok,ts){
+          if(ok&&ts){try{localStorage.setItem('gp_sess',String(ts));}catch(e){}}
+          var el=document.getElementById('ciInfo');
+          if(el)el.innerHTML=(ok?'\u2601\ufe0f Synced to cloud \u2014 ':'\u26a0\ufe0f Cloud sync failed (offline?) \u2014 ')+el.innerHTML;
+        });
+      }
+      if(resetHist){
+        SCANS={};saveScans();ADJUSTS={};saveAdjusts();
+        _cloudInit=false;_lastScanUa=0;
+        fbsWipe('wms_scans',function(){
+          fbsWipe('wms_adjusts',function(){
+            fbsWipe('wms_rolls',function(){pushOrders();});
+          });
+        });
+      }else{
+        pushOrders();
+      }
     }catch(err){alert('Error: '+err.message);}
   };
   r.readAsArrayBuffer(f);
@@ -1482,11 +1537,21 @@ function cloudSync(cb){
   // scans
   add();
   if(!_cloudInit){
-    // first time: full load, then remember newest timestamp
-    fbsLoadScans(function(m){
-      if(m){for(var k in m)SCANS[k]=m[k];saveScans();}
-      _lastScanUa=Date.now();_cloudInit=true;
-      done();
+    // first time: check session id (new import elsewhere?) then full load
+    fbsGetSession(function(ts){
+      if(ts){
+        var old='';try{old=localStorage.getItem('gp_sess')||'';}catch(e){}
+        if(String(old)!==String(ts)){
+          // new session started on another device: drop stale local history
+          SCANS={};saveScans();ADJUSTS={};saveAdjusts();
+          try{localStorage.setItem('gp_sess',String(ts));}catch(e){}
+        }
+      }
+      fbsLoadScans(function(m){
+        if(m){for(var k in m)SCANS[k]=m[k];saveScans();}
+        _lastScanUa=Date.now();_cloudInit=true;
+        done();
+      });
     });
   }else{
     // incremental: only scans changed since last check (10s overlap buffer for clock skew)
