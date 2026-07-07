@@ -621,6 +621,136 @@ var o=[];var l=Array.isArray(e);for(f=n.s.c;f<=n.e.c;++f)s[f]=ya(f);for(var c=n.
 // ── STATE ──
 var rows=[], zoneMap={}, fDate='';
 
+// ═══════════ FIREBASE SYNC LAYER (Firestore REST) ═══════════
+var FBS_PROJ='product-management-42e04';
+var FBS_KEY='AIzaSyAgehd9UslGFUdP4Cw3dWVd3PWGqAXexsQ';
+var FBS_BASE='https://firestore.googleapis.com/v1/projects/'+FBS_PROJ+'/databases/(default)/documents/';
+
+function fbsEnc(obj){
+  var f={};
+  for(var k in obj){
+    var v=obj[k];
+    if(v===null||v===undefined)continue;
+    if(typeof v==='number'&&Math.floor(v)===v)f[k]={integerValue:String(v)};
+    else f[k]={stringValue:String(v)};
+  }
+  return {fields:f};
+}
+function fbsDec(fields){
+  var o={};fields=fields||{};
+  for(var k in fields){
+    var v=fields[k];
+    if(v.integerValue!==undefined)o[k]=parseInt(v.integerValue,10);
+    else if(v.stringValue!==undefined)o[k]=v.stringValue;
+    else if(v.doubleValue!==undefined)o[k]=v.doubleValue;
+  }
+  return o;
+}
+function fbsDocId(s){return String(s).replace(/[\/\.\#\$\[\]\*\s]/g,'_');}
+
+function fbsSet(coll,docId,obj){
+  var url=FBS_BASE+coll+'/'+encodeURIComponent(fbsDocId(docId))+'?key='+FBS_KEY;
+  return fetch(url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(fbsEnc(obj))})
+    .then(function(r){if(!r.ok)throw new Error('w');return true;})
+    .catch(function(e){fbsQueue('set',coll,docId,obj);throw e;});
+}
+function fbsDelete(coll,docId){
+  var url=FBS_BASE+coll+'/'+encodeURIComponent(fbsDocId(docId))+'?key='+FBS_KEY;
+  return fetch(url,{method:'DELETE'}).catch(function(){fbsQueue('del',coll,docId,null);});
+}
+function fbsQueue(op,coll,docId,obj){
+  try{var q=JSON.parse(localStorage.getItem('fb_queue')||'[]');q.push({op:op,coll:coll,docId:docId,obj:obj});localStorage.setItem('fb_queue',JSON.stringify(q));}catch(e){}
+}
+function fbsFlush(){
+  var q;try{q=JSON.parse(localStorage.getItem('fb_queue')||'[]');}catch(e){return;}
+  if(!q.length)return;
+  localStorage.setItem('fb_queue','[]');
+  var pending=q.slice();
+  (function next(){
+    if(!pending.length)return;
+    var it=pending.shift();
+    var p=(it.op==='del')?fbsDelete(it.coll,it.docId):fbsSet(it.coll,it.docId,it.obj);
+    Promise.resolve(p).then(next).catch(function(){next();});
+  })();
+}
+setInterval(fbsFlush,15000);
+
+function fbsList(coll,cb){
+  var out=[];
+  function page(tok){
+    var url=FBS_BASE+coll+'?key='+FBS_KEY+'&pageSize=300'+(tok?('&pageToken='+encodeURIComponent(tok)):'');
+    fetch(url).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(j){
+      (j.documents||[]).forEach(function(d){out.push(fbsDec(d.fields));});
+      if(j.nextPageToken)page(j.nextPageToken);else cb(out);
+    }).catch(function(){cb(out);});
+  }
+  page(null);
+}
+
+// ---- SCANS ----
+function fbsWriteScan(olpn,code,rec){
+  fbsSet('wms_scans',olpn+'__'+code,{olpn:olpn,code:String(code),n:rec.n,t:rec.t||'',d:rec.d||'',dt:rec.dt||'',u:rec.u||'',ua:Date.now()}).catch(function(){});
+}
+function fbsLoadScans(cb){
+  fbsList('wms_scans',function(arr){
+    var m={};arr.forEach(function(x){if(x.olpn&&x.code!=null)m[x.olpn+'|'+x.code]={n:x.n||0,t:x.t||'',d:x.d||'',dt:x.dt||'',u:x.u||''};});
+    cb(m);
+  });
+}
+// Incremental: only fetch scans changed since timestamp `ts` (ms). Fast + cheap for live polling.
+function fbsQueryScansSince(ts,cb){
+  var body={structuredQuery:{from:[{collectionId:'wms_scans'}],
+    where:{fieldFilter:{field:{fieldPath:'ua'},op:'GREATER_THAN',value:{integerValue:String(ts)}}},
+    orderBy:[{field:{fieldPath:'ua'},direction:'ASCENDING'}]}};
+  fetch(FBS_BASE.replace(/\/$/,'')+':runQuery?key='+FBS_KEY,
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){return r.ok?r.json():Promise.reject();}).then(function(arr){
+      var m={},maxUa=ts;
+      (arr||[]).forEach(function(row){
+        if(!row.document)return;
+        var x=fbsDec(row.document.fields);
+        if(x.olpn&&x.code!=null)m[x.olpn+'|'+x.code]={n:x.n||0,t:x.t||'',d:x.d||'',dt:x.dt||'',u:x.u||''};
+        if(x.ua&&x.ua>maxUa)maxUa=x.ua;
+      });
+      cb(m,maxUa);
+    }).catch(function(){cb(null,ts);});
+}
+// ---- ADJUSTS ----
+function fbsWriteAdjust(olpn,code,rec){
+  fbsSet('wms_adjusts',olpn+'__'+code,{olpn:olpn,code:String(code),n:rec.n,d:rec.d||'',u:rec.u||'',ua:Date.now()}).catch(function(){});
+}
+function fbsRemoveAdjust(olpn,code){fbsDelete('wms_adjusts',olpn+'__'+code);}
+function fbsLoadAdjusts(cb){
+  fbsList('wms_adjusts',function(arr){
+    var m={};arr.forEach(function(x){if(x.olpn&&x.code!=null)m[x.olpn+'|'+x.code]={n:x.n||0,d:x.d||'',u:x.u||''};});
+    cb(m);
+  });
+}
+// ---- ORDERS (chunked) ----
+function fbsWriteOrders(rowsArr,fdate,cb){
+  var CH=400,chunks=Math.ceil(rowsArr.length/CH)||0;
+  var writes=[];
+  for(var i=0;i<chunks;i++){writes.push(fbsSet('wms_orders','chunk_'+i,{data:JSON.stringify(rowsArr.slice(i*CH,(i+1)*CH))}));}
+  Promise.all(writes.map(function(p){return p.catch(function(){});})).then(function(){
+    fbsSet('wms_meta','session',{fdate:fdate||'',chunks:chunks,ts:Date.now()}).then(function(){if(cb)cb(true);}).catch(function(){if(cb)cb(false);});
+  });
+}
+function fbsLoadOrders(cb){
+  fetch(FBS_BASE+'wms_meta/session?key='+FBS_KEY).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(j){
+    var meta=fbsDec(j.fields),chunks=meta.chunks||0,fdate=meta.fdate||'';
+    if(!chunks){cb(null,fdate);return;}
+    var parts=new Array(chunks),got=0,bad=false;
+    for(var i=0;i<chunks;i++)(function(idx){
+      fetch(FBS_BASE+'wms_orders/chunk_'+idx+'?key='+FBS_KEY).then(function(r){return r.ok?r.json():Promise.reject();}).then(function(dj){
+        try{parts[idx]=JSON.parse(fbsDec(dj.fields).data||'[]');}catch(e){parts[idx]=[];}
+        if(++got===chunks&&!bad)cb([].concat.apply([],parts),fdate);
+      }).catch(function(){if(!bad){bad=true;cb(null,fdate);}});
+    })(i);
+  }).catch(function(){cb(null,'');});
+}
+
+
+
 // ── INIT DATE ──
 (function(){
   var d=new Date(),y=d.getFullYear(),m=('0'+(d.getMonth()+1)).slice(-2),day=('0'+d.getDate()).slice(-2);
@@ -691,6 +821,11 @@ function doImport(){
         localStorage.setItem('gp_zones',JSON.stringify(zoneMap));
         localStorage.setItem('gp_fdate',fDate);
       }catch(e){}
+      // push order data to Firebase so the Zebra/phones get it automatically
+      fbsWriteOrders(rows,fDate,function(ok){
+        var el=document.getElementById('ciInfo');
+        if(el)el.innerHTML=(ok?'\u2601\ufe0f Synced to cloud \u2014 ':'\u26a0\ufe0f Cloud sync failed (offline?) \u2014 ')+el.innerHTML;
+      });
     }catch(err){alert('Error: '+err.message);}
   };
   r.readAsArrayBuffer(f);
@@ -970,21 +1105,23 @@ var REP_GROUP='Full Case';
 
 function initReportPage(group){
   REP_GROUP=group;
-  if(rows.length===0){
-    document.getElementById('repNoData').style.display='';
-    document.getElementById('repCtrl').style.display='none';
-    return;
-  }
-  document.getElementById('repNoData').style.display='none';
-  document.getElementById('repCtrl').style.display='';
-  document.getElementById('repTitle').textContent=group.toUpperCase()+' SCAN REPORT';
-  // default date = today
+  syncFromStorage();
   var di=document.getElementById('repDate');
   if(!di.value){
     var n=new Date();
     di.value=n.getFullYear()+'-'+('0'+(n.getMonth()+1)).slice(-2)+'-'+('0'+n.getDate()).slice(-2);
   }
-  runReport();
+  document.getElementById('repTitle').textContent=group.toUpperCase()+' SCAN REPORT';
+  cloudSync(function(){
+    if(rows.length===0){
+      document.getElementById('repNoData').style.display='';
+      document.getElementById('repCtrl').style.display='none';
+      return;
+    }
+    document.getElementById('repNoData').style.display='none';
+    document.getElementById('repCtrl').style.display='';
+    runReport();
+  });
 }
 
 function _repGroupMatch(m){
@@ -1027,6 +1164,10 @@ function buildReport(){
 }
 
 function runReport(){
+  syncFromStorage();
+  cloudSync(function(){_renderReport();});
+}
+function _renderReport(){
   var list=buildReport();
   var tbl=document.getElementById('repTable'),emp=document.getElementById('repEmpty');
   if(list.length===0){tbl.innerHTML='';emp.style.display='';return;}
@@ -1098,10 +1239,12 @@ function saveAdjust(){
   var k=scanKey(_adjCur.olpn,_adjCur.code);
   if(!v||v<=0){
     delete ADJUSTS[k];
+    fbsRemoveAdjust(_adjCur.olpn,_adjCur.code);
   }else{
     var now=new Date();
     var d=now.getFullYear()+'-'+('0'+(now.getMonth()+1)).slice(-2)+'-'+('0'+now.getDate()).slice(-2);
-    ADJUSTS[k]={n:v,d:d};
+    ADJUSTS[k]={n:v,d:d,u:''};
+    fbsWriteAdjust(_adjCur.olpn,_adjCur.code,ADJUSTS[k]);
   }
   saveAdjusts();
   closeAdjust();
@@ -1164,15 +1307,26 @@ function exportAdjust(){
 // ── MONITOR PAGE ──
 var monRoute=null, monStore=null;
 
+var _monPoll=null;
 function initMonitorPage(){
-  if(rows.length===0){
-    document.getElementById('monNoData').style.display='';
-    document.getElementById('monCtrl').style.display='none';
-    return;
-  }
-  document.getElementById('monNoData').style.display='none';
-  document.getElementById('monCtrl').style.display='';
-  renderMonitor();
+  syncFromStorage();
+  cloudSync(function(){
+    if(rows.length===0){
+      document.getElementById('monNoData').style.display='';
+      document.getElementById('monCtrl').style.display='none';
+      return;
+    }
+    document.getElementById('monNoData').style.display='none';
+    document.getElementById('monCtrl').style.display='';
+    renderMonitor();
+  });
+  // poll Firebase every 15s while Monitor is open (live board)
+  if(_monPoll)clearInterval(_monPoll);
+  _monPoll=setInterval(function(){
+    var mon=document.getElementById('pgMonitor');
+    if(!mon||mon.style.display==='none'){clearInterval(_monPoll);_monPoll=null;return;}
+    cloudSync(function(){if(rows.length)renderMonitor();});
+  },3000);
 }
 
 function _scannedFor(r){
@@ -1295,14 +1449,83 @@ function monSelStore(st){
 var SCANS={}; // key "olpn|prodCode" -> {n:scannedQty, t:'HH:MM:SS'}
 function scanKey(olpn,code){return olpn+'|'+code;}
 function loadScans(){try{SCANS=JSON.parse(localStorage.getItem('gp_scans')||'{}')||{};}catch(e){SCANS={};}}
+// Pull the latest data written by other tabs / the Picking New app
+function syncFromStorage(){
+  try{
+    var sr=localStorage.getItem('gp_rows');
+    if(sr){var nr=JSON.parse(sr);if(nr&&nr.length){rows=nr;}}
+    var zz=localStorage.getItem('gp_zones');if(zz)zoneMap=JSON.parse(zz)||{};
+    var fd=localStorage.getItem('gp_fdate');if(fd)fDate=fd;
+  }catch(e){}
+  loadScans();
+  loadAdjusts();
+}
+// Pull the latest from FIREBASE (all devices), merge into local, then callback to re-render.
+// First call = full load; later calls = INCREMENTAL (only changed scans) for fast, cheap polling.
+var _cloudBusy=false, _lastScanUa=0, _cloudInit=false;
+function cloudSync(cb){
+  if(_cloudBusy){if(cb)cb();return;}
+  _cloudBusy=true;
+  var pending=0;
+  function add(){pending++;}
+  function done(){if(--pending<=0){_cloudBusy=false;if(cb)cb();}}
+
+  // orders — only if we don't have them yet locally
+  if(rows.length===0){
+    add();
+    fbsLoadOrders(function(r,fd){
+      if(r&&r.length){rows=r;if(fd)fDate=fd;try{localStorage.setItem('gp_rows',JSON.stringify(rows));localStorage.setItem('gp_fdate',fDate);}catch(e){}}
+      done();
+    });
+  }
+
+  // scans
+  add();
+  if(!_cloudInit){
+    // first time: full load, then remember newest timestamp
+    fbsLoadScans(function(m){
+      if(m){for(var k in m)SCANS[k]=m[k];saveScans();}
+      _lastScanUa=Date.now();_cloudInit=true;
+      done();
+    });
+  }else{
+    // incremental: only scans changed since last check (10s overlap buffer for clock skew)
+    fbsQueryScansSince(Math.max(0,_lastScanUa-10000),function(m,maxUa){
+      if(m){var any=false;for(var k in m){SCANS[k]=m[k];any=true;}if(any)saveScans();}
+      if(maxUa&&maxUa>_lastScanUa)_lastScanUa=maxUa;
+      done();
+    });
+  }
+
+  // adjusts — few docs, full load is cheap and catches deletions
+  add();
+  fbsLoadAdjusts(function(m){
+    if(m){ADJUSTS=m;saveAdjusts();}
+    done();
+  });
+
+  if(pending===0){_cloudBusy=false;if(cb)cb();}
+}
+
+// Live update: if another tab/app writes scans while this page is open, refresh the current view
+window.addEventListener('storage',function(ev){
+  if(ev.key==='gp_scans'||ev.key==='gp_adjusts'||ev.key==='gp_rows'){
+    syncFromStorage();
+    var mon=document.getElementById('pgMonitor'),rep=document.getElementById('pgReport');
+    if(mon&&mon.style.display!=='none'&&typeof renderMonitor==='function')renderMonitor();
+    if(rep&&rep.style.display!=='none'&&typeof runReport==='function')runReport();
+  }
+});
 function saveScans(){try{localStorage.setItem('gp_scans',JSON.stringify(SCANS));}catch(e){}}
 loadScans();
 function recordScan(olpn,code,n,t){
   var now=new Date();
   var d=now.getFullYear()+'-'+('0'+(now.getMonth()+1)).slice(-2)+'-'+('0'+now.getDate()).slice(-2);
   var dt=('0'+now.getDate()).slice(-2)+'/'+('0'+(now.getMonth()+1)).slice(-2)+'/'+now.getFullYear()+' '+(t||'');
-  SCANS[scanKey(olpn,code)]={n:n,t:t||'',d:d,dt:dt};
+  var rec={n:n,t:t||'',d:d,dt:dt};
+  SCANS[scanKey(olpn,code)]=rec;
   saveScans();
+  fbsWriteScan(olpn,code,rec);
 }
 function resetScans(){
   if(!confirm('Reset ALL scan progress and adjustments?\nThis clears the Monitor and Scan history.'))return;
