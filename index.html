@@ -20,7 +20,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:var(--gray-bg);color:var
 #sidebar .hbtn{width:34px;height:34px;background:none;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;margin-left:auto;flex-shrink:0;border-radius:6px;padding:0;}
 #sidebar.collapsed .hbtn{margin-left:0;}
 #sidebar .hbtn:hover{background:rgba(255,255,255,.15);}
-#sidebar nav{padding:12px 0;flex:1;overflow:hidden;}
+#sidebar nav{padding:12px 0;flex:1;overflow:visible;}
 #sidebar nav a{display:flex;align-items:center;gap:12px;padding:11px 18px;color:rgba(255,255,255,.75);font-size:14px;font-weight:500;border-left:3px solid transparent;cursor:pointer;white-space:nowrap;text-decoration:none;transition:padding .22s;}
 #sidebar.collapsed nav a{padding:11px 0;justify-content:center;gap:0;border-left:none;}
 #sidebar nav a .nav-label{transition:opacity .15s;opacity:1;}
@@ -28,6 +28,18 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:var(--gray-bg);color:var
 #sidebar nav a:hover{color:#fff;background:rgba(255,255,255,.08);}
 #sidebar nav a.active{color:#fff;background:rgba(255,255,255,.15);border-left-color:#42A5F5;}
 #sidebar.collapsed nav a.active{border-left-color:transparent;border-right:3px solid #42A5F5;}
+/* hover tooltip on collapsed sidebar icons (Claude.ai style: solid black pill) */
+#sidebar nav a{position:relative;}
+#sidebar.collapsed nav a::after{
+  content:attr(data-tip);
+  position:absolute;left:calc(100% + 6px);top:50%;transform:translateY(-50%) scale(.97);
+  background:#000;color:#fff;font-size:13px;font-weight:600;white-space:nowrap;
+  padding:6px 12px;border-radius:7px;pointer-events:none;opacity:0;
+  letter-spacing:.1px;line-height:1;
+  box-shadow:0 2px 10px rgba(0,0,0,.35);
+  transition:opacity .1s ease,transform .1s ease;z-index:300;
+}
+#sidebar.collapsed nav a:hover::after{opacity:1;transform:translateY(-50%) scale(1);}
 #main{margin-left:var(--sw);flex:1;display:flex;flex-direction:column;min-height:100vh;transition:margin-left .22s ease;}
 #main.sb-col{margin-left:var(--sw-col);}
 #topbar{height:var(--th);background:#fff;border-bottom:1px solid var(--gray-border);display:flex;align-items:center;padding:0 28px;position:sticky;top:0;z-index:50;gap:10px;}
@@ -312,22 +324,22 @@ tbody td{padding:9px 14px;font-size:13px;}
     </button>
   </div>
   <nav>
-    <a id="nImp" class="active" onclick="showPage('import')">
+    <a id="nImp" class="active" data-tip="Import File" onclick="showPage('import')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M4 16l4-8 4 8 4-10 4 10"/><path d="M3 20h18"/></svg><span class="nav-label">Import File</span>
     </a>
-    <a id="nLbl" onclick="showPage('label')">
+    <a id="nLbl" data-tip="Label" onclick="showPage('label')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 9H4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2"/><path d="M6 5h12l3 7-3 7H6"/><circle cx="11" cy="12" r="1"/></svg><span class="nav-label">Label</span>
     </a>
-    <a id="nScan" onclick="showPage('scan')">
+    <a id="nScan" data-tip="Scan" onclick="showPage('scan')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg><span class="nav-label">Scan</span>
     </a>
-    <a id="nMon" onclick="showPage('monitor')">
+    <a id="nMon" data-tip="Monitor" onclick="showPage('monitor')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg><span class="nav-label">Monitor</span>
     </a>
-    <a id="nRepF" onclick="showPage('repfull')">
+    <a id="nRepF" data-tip="Full Case Report" onclick="showPage('repfull')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg><span class="nav-label">Full Case Report</span>
     </a>
-    <a id="nRepB" onclick="showPage('repbreak')">
+    <a id="nRepB" data-tip="Break Case Report" onclick="showPage('repbreak')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg><span class="nav-label">Break Case Report</span>
     </a>
   </nav>
