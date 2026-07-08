@@ -42,6 +42,9 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:var(--gray-bg);color:var
 #sidebar.collapsed nav a:hover::after{opacity:1;transform:translateY(-50%) scale(1);}
 #main{margin-left:var(--sw);flex:1;display:flex;flex-direction:column;min-height:100vh;transition:margin-left .22s ease;}
 #main.sb-col{margin-left:var(--sw-col);}
+.mob-menu{display:none;width:38px;height:38px;border:none;background:none;border-radius:8px;color:var(--dark);align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;}
+.mob-menu:active{background:var(--gray-bg);}
+#sbOverlay{display:block;position:fixed;inset:0;pointer-events:none;opacity:0;}
 #topbar{height:var(--th);background:#fff;border-bottom:1px solid var(--gray-border);display:flex;align-items:center;padding:0 28px;position:sticky;top:0;z-index:50;gap:10px;}
 #topbar h1{font-size:16px;font-weight:600;}
 .badge{background:var(--blue);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;}
@@ -144,14 +147,24 @@ tbody td{padding:9px 14px;font-size:13px;}
 @media(max-width:760px){
   .sc-cols{flex-direction:column;gap:10px;}
   .sc-photo img{max-height:160px;}
-  #sidebar{width:100%;min-height:0;position:fixed;bottom:0;top:auto;flex-direction:row;z-index:200;}
-  #sidebar .logo{display:none;}
-  #sidebar nav{display:flex;flex:1;padding:0;}
-  #sidebar nav a{flex:1;flex-direction:column;gap:3px;padding:8px 4px;font-size:11px;justify-content:center;border-left:none;border-top:3px solid transparent;}
-  #sidebar nav a.active{border-left:none;border-top-color:#42A5F5;}
-  #main{margin-left:0;padding-bottom:64px;}
+  /* slide-in drawer: hidden off-canvas, hamburger in topbar opens it */
+  #sidebar{width:240px !important;position:fixed;left:0;top:0;bottom:0;flex-direction:column;z-index:500;
+    transform:translateX(-105%);transition:transform .25s ease;box-shadow:4px 0 24px rgba(0,0,0,.35);}
+  body.sb-open #sidebar{transform:translateX(0);}
+  #sidebar .logo{padding:0 14px !important;justify-content:flex-start !important;}
+  #sidebar .logo span{display:inline !important;opacity:1 !important;width:auto !important;}
+  #sidebar .dot{display:flex !important;}
+  #sidebar .hbtn{display:none !important;}
+  #sidebar nav a{justify-content:flex-start !important;padding:13px 18px !important;gap:12px !important;border-left:3px solid transparent !important;border-right:none !important;}
+  #sidebar nav a.active{border-left-color:#42A5F5 !important;}
+  #sidebar nav a .nav-label{opacity:1 !important;width:auto !important;overflow:visible !important;}
+  #sidebar.collapsed nav a::after{display:none;}
+  #sbOverlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:499;opacity:0;pointer-events:none;transition:opacity .25s;}
+  body.sb-open #sbOverlay{opacity:1;pointer-events:auto;}
+  .mob-menu{display:inline-flex !important;}
+  #main{margin-left:0 !important;padding-bottom:0;}
   #content{padding:12px;}
-  #topbar{padding:0 14px;}
+  #topbar{padding:0 10px;gap:10px;}
   .sc-size{flex-basis:44px;font-size:16px;}
   .sc-qty{flex-basis:72px;}
   .sc-qty .q,.sc-qty .s{font-size:19px;}
@@ -345,9 +358,14 @@ tbody td{padding:9px 14px;font-size:13px;}
   </nav>
 </div>
 
+<div id="sbOverlay" onclick="closeMobileSidebar()"></div>
+
 <!-- MAIN -->
 <div id="main">
   <div id="topbar">
+    <button class="mob-menu" onclick="toggleMobileSidebar()" aria-label="Menu">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
     <h1 id="pgTitle">Import File</h1>
     <span id="topBadge" class="badge" style="display:none"></span>
   </div>
@@ -836,6 +854,7 @@ function showPage(p){
   if(p==='scan') initScanPage();
   if(p==='monitor') initMonitorPage();
   if(isRep) initReportPage(p==='repfull'?'Full Case':'Break Case');
+  closeMobileSidebar();
 }
 
 // ── IMPORT ──
@@ -1689,6 +1708,9 @@ function updateBigPhoto(){
     box.style.display='block';
   });
 }
+
+function toggleMobileSidebar(){document.body.classList.toggle('sb-open');}
+function closeMobileSidebar(){document.body.classList.remove('sb-open');}
 
 function toggleSidebar(){
   var sb=document.getElementById('sidebar');
