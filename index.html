@@ -171,6 +171,12 @@ tbody td{padding:9px 14px;font-size:13px;}
 }
 
 /* ── LABEL OVERLAY (full screen, shown after click) ── */
+/* ── IMPORT ROUTE ── */
+.rt-tbl{width:100%;border-collapse:collapse;font-size:13px;}
+.rt-tbl th{background:#000;color:#fff;font-weight:700;padding:9px 10px;text-align:center;font-size:12px;}
+.rt-tbl td{padding:8px 10px;text-align:center;font-weight:600;border-bottom:1px solid #EEF1F5;border-right:1px solid #F3F5F8;}
+.rt-badge{display:inline-flex;background:#1E88E5;color:#fff;font-size:11px;font-weight:700;border-radius:4px;padding:3px 8px;}
+
 /* ── MONITOR PAGE ── */
 .mon-row{display:flex;align-items:center;gap:10px;margin-bottom:7px;}
 .mon-lbl{flex:0 0 110px;font-size:13px;font-weight:600;color:var(--dark);}
@@ -355,6 +361,9 @@ tbody td{padding:9px 14px;font-size:13px;}
     <a id="nRepB" data-tip="Break Case Report" onclick="showPage('repbreak')">
       <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg><span class="nav-label">Break Case Report</span>
     </a>
+    <a id="nRoute" data-tip="Import Route" onclick="showPage('route')">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 4v4h-7"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/></svg><span class="nav-label">Import Route</span>
+    </a>
   </nav>
 </div>
 
@@ -457,6 +466,34 @@ tbody td{padding:9px 14px;font-size:13px;}
           <div class="ci" id="pickInfo"></div>
           <div class="spin-wrap" id="pickSpinner"><div class="ring"></div><span id="pickSpinMsg">Generating...</span></div>
         </div></div>
+      </div>
+    </div>
+
+    <!-- IMPORT ROUTE PAGE -->
+    <div id="pgRoute" style="display:none">
+      <div class="panel">
+        <div class="ph"><span>IMPORT ROUTE</span></div>
+        <div class="pb" style="padding:16px 14px">
+          <div class="rep-filters">
+            <div class="rep-fg">
+              <label>File input (.xlsx &#8212; sheet "Loading")</label>
+              <input type="file" id="routeFile" accept=".xlsx,.xls" class="rep-sel" style="padding:8px">
+            </div>
+            <div class="rep-fg">
+              <label>&nbsp;</label>
+              <button class="rep-search" style="background:#1565C0" onclick="importRouteFile()">&#128229; Import</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel" id="routeDataPanel" style="margin-top:14px;display:none">
+        <div class="ph" style="display:flex;justify-content:space-between;align-items:center">
+          <span>DATA ROUTE</span>
+          <span id="routeBadges" style="display:flex;gap:6px"></span>
+        </div>
+        <div class="pb" style="padding:0;overflow-x:auto">
+          <table class="rt-tbl" id="routeTable"></table>
+        </div>
       </div>
     </div>
 
@@ -717,6 +754,20 @@ function fbsList(coll,cb){
   page(null);
 }
 
+
+// ---- ROUTE PLAN (Master Transport Plan / Loading sheet) ----
+function fbsSetRoute(list,rdate){
+  return fbsSet('wms_meta','route',{data:JSON.stringify(list||[]),rdate:rdate||'',ua:Date.now()});
+}
+function fbsGetRoute(cb){
+  fetch(FBS_BASE+'wms_meta/route?key='+FBS_KEY)
+    .then(function(r){return r.ok?r.json():Promise.reject();})
+    .then(function(j){
+      var m=fbsDec(j.fields);var l=[];
+      try{l=JSON.parse(m.data||'[]');}catch(e){}
+      cb(l,m.rdate||'');
+    }).catch(function(){cb(null,'');});
+}
 // ---- SCANS ----
 function fbsWriteScan(olpn,code,rec){
   fbsSet('wms_scans',olpn+'__'+code,{olpn:olpn,code:String(code),n:rec.n,t:rec.t||'',d:rec.d||'',dt:rec.dt||'',u:rec.u||'',ua:Date.now()}).catch(function(){});
@@ -842,15 +893,18 @@ function showPage(p){
   document.getElementById('pgScan').style.display=p==='scan'?'':'none';
   document.getElementById('pgMonitor').style.display=p==='monitor'?'':'none';
   document.getElementById('pgReport').style.display=isRep?'':'none';
+  document.getElementById('pgRoute').style.display=p==='route'?'':'none';
   document.getElementById('nImp').className=p==='import'?'active':'';
   document.getElementById('nLbl').className=p==='label'?'active':'';
   document.getElementById('nScan').className=p==='scan'?'active':'';
   document.getElementById('nMon').className=p==='monitor'?'active':'';
   document.getElementById('nRepF').className=p==='repfull'?'active':'';
   document.getElementById('nRepB').className=p==='repbreak'?'active':'';
-  var titles={import:'Import File',label:'Label',scan:'Scan Product',monitor:'Monitor',repfull:'Full Case Scan Report',repbreak:'Break Case Scan Report'};
+  document.getElementById('nRoute').className=p==='route'?'active':'';
+  var titles={import:'Import File',label:'Label',scan:'Scan Product',monitor:'Monitor',repfull:'Full Case Scan Report',repbreak:'Break Case Scan Report',route:'Import Route'};
   document.getElementById('pgTitle').textContent=titles[p]||'';
   if(p==='import') initImportPage();
+  if(p==='route') initRoutePage();
   if(p==='label') initLabelPage();
   if(p==='scan') initScanPage();
   if(p==='monitor') initMonitorPage();
@@ -1411,6 +1465,114 @@ function exportAdjust(){
   var now=new Date();
   var fn='Shortage_'+now.getFullYear()+('0'+(now.getMonth()+1)).slice(-2)+('0'+now.getDate()).slice(-2)+'.xlsx';
   XLSX.writeFile(wb,fn);
+}
+
+// ── IMPORT ROUTE (Master Transport Plan / Loading sheet) ──
+var ROUTE_DATA=[], ROUTE_DATE='';
+
+function parseRouteSheet(wb){
+  var ws=wb.Sheets['Loading'];
+  if(!ws)return null;
+  var grid=XLSX.utils.sheet_to_json(ws,{header:1,raw:false});
+  // date: first non-empty cell of row 1
+  var rdate='';
+  if(grid[0])for(var i=0;i<grid[0].length;i++){if(grid[0][i]){rdate=String(grid[0][i]).trim();break;}}
+  // header row + block start columns (each block begins at a 'WAVE' cell)
+  var hr=-1,starts=[];
+  for(var r=0;r<Math.min(grid.length,6);r++){
+    var row=grid[r]||[],s=[];
+    for(var c=0;c<row.length;c++){if(String(row[c]||'').trim().toUpperCase()==='WAVE')s.push(c);}
+    if(s.length){hr=r;starts=s;break;}
+  }
+  if(hr<0)return null;
+  var out=[],seen={};
+  starts.forEach(function(c0){
+    var wave='',door='';
+    for(var r=hr+1;r<grid.length;r++){
+      var row=grid[r]||[];
+      var w=String(row[c0]||'').trim();
+      var route=String(row[c0+1]||'').trim();
+      var stop=String(row[c0+2]||'').trim();
+      var sid=String(row[c0+3]||'').trim();
+      var sname=String(row[c0+4]||'').trim();
+      var d=String(row[c0+5]||'').trim();
+      if(w)wave=w;      // merged cells: carry forward
+      if(d)door=d;
+      if(!route||!sid)continue;
+      var k=route+'|'+sid;
+      if(seen[k])continue;seen[k]=1;
+      out.push({wave:wave,route:route,stop:stop,storeId:sid,storeName:sname,gate:door});
+    }
+  });
+  return {list:out,rdate:rdate};
+}
+
+function importRouteFile(){
+  var f=document.getElementById('routeFile').files[0];
+  if(!f){alert('Please choose the Master Transport Plan .xlsx file');return;}
+  var r=new FileReader();
+  r.onload=function(e){
+    try{
+      var wb=XLSX.read(e.target.result,{type:'array'});
+      var res=parseRouteSheet(wb);
+      if(!res||!res.list.length){alert('Sheet "Loading" not found or empty in this file.');return;}
+      ROUTE_DATA=res.list;ROUTE_DATE=res.rdate;
+      try{localStorage.setItem('gp_route',JSON.stringify(ROUTE_DATA));localStorage.setItem('gp_route_date',ROUTE_DATE);}catch(e2){}
+      fbsSetRoute(ROUTE_DATA,ROUTE_DATE).then(function(){}).catch(function(){});
+      renderRouteTable();
+    }catch(err){alert('Error: '+err.message);}
+  };
+  r.readAsArrayBuffer(f);
+}
+
+function renderRouteTable(){
+  var panel=document.getElementById('routeDataPanel');
+  if(!ROUTE_DATA.length){panel.style.display='none';return;}
+  // sort by wave, route, stop ascending
+  var list=ROUTE_DATA.slice().sort(function(a,b){
+    return (parseInt(a.wave)||0)-(parseInt(b.wave)||0)
+      ||(parseInt(a.route)||0)-(parseInt(b.route)||0)
+      ||(parseInt(a.stop)||0)-(parseInt(b.stop)||0);
+  });
+  // badges
+  var waves={},routes={},stores={};
+  list.forEach(function(x){waves[x.wave]=1;routes[x.route]=1;stores[x.storeId]=1;});
+  document.getElementById('routeBadges').innerHTML=
+    '<span class="rt-badge">'+Object.keys(waves).length+' Wave</span>'
+    +'<span class="rt-badge">'+Object.keys(routes).length+' Route</span>'
+    +'<span class="rt-badge">'+Object.keys(stores).length+' Store</span>';
+  // table: repeats blanked like the reference
+  var h='<thead><tr><th>Date</th><th>Wave</th><th>Route</th><th>Gate</th><th>Stop</th><th>Store</th></tr></thead><tbody>';
+  var pw='',pr='',first=true;
+  list.forEach(function(x){
+    var showDate=first?esc(ROUTE_DATE):'';
+    var showWave=(x.wave!==pw)?esc(x.wave):'';
+    var showRoute=(x.route!==pr)?esc(x.route):'';
+    var showGate=(x.route!==pr)?esc(x.gate):'';
+    h+='<tr><td style="text-align:left">'+showDate+'</td><td>'+showWave+'</td><td>'+showRoute+'</td>'
+      +'<td>'+showGate+'</td><td>'+esc(x.stop)+'</td><td>'+esc(x.storeId)+'</td></tr>';
+    pw=x.wave;pr=x.route;first=false;
+  });
+  h+='</tbody>';
+  document.getElementById('routeTable').innerHTML=h;
+  panel.style.display='';
+}
+
+function initRoutePage(){
+  // local cache first
+  try{
+    var sr=localStorage.getItem('gp_route');
+    if(sr){ROUTE_DATA=JSON.parse(sr)||[];ROUTE_DATE=localStorage.getItem('gp_route_date')||'';}
+  }catch(e){}
+  renderRouteTable();
+  // then refresh from Firebase (another device may have imported)
+  fbsGetRoute(function(l,rd){
+    if(l&&l.length){
+      ROUTE_DATA=l;ROUTE_DATE=rd||ROUTE_DATE;
+      try{localStorage.setItem('gp_route',JSON.stringify(ROUTE_DATA));localStorage.setItem('gp_route_date',ROUTE_DATE);}catch(e){}
+      renderRouteTable();
+    }
+  });
 }
 
 // ── MONITOR PAGE ──
