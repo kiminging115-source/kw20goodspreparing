@@ -850,11 +850,32 @@ function showPage(p){
   document.getElementById('nRepB').className=p==='repbreak'?'active':'';
   var titles={import:'Import File',label:'Label',scan:'Scan Product',monitor:'Monitor',repfull:'Full Case Scan Report',repbreak:'Break Case Scan Report'};
   document.getElementById('pgTitle').textContent=titles[p]||'';
+  if(p==='import') initImportPage();
   if(p==='label') initLabelPage();
   if(p==='scan') initScanPage();
   if(p==='monitor') initMonitorPage();
   if(isRep) initReportPage(p==='repfull'?'Full Case':'Break Case');
   closeMobileSidebar();
+}
+
+// Pull imported data from Firebase so a phone/Zebra shows what the office imported
+function initImportPage(){
+  fbsLoadOrders(function(r,fd,ts){
+    // new-session reset if the office re-imported
+    if(ts){
+      var old='';try{old=localStorage.getItem('gp_sess')||'';}catch(e){}
+      if(String(old)!==String(ts)){
+        SCANS={};saveScans();ADJUSTS={};saveAdjusts();
+        _cloudInit=false;_lastScanUa=0;
+        try{localStorage.setItem('gp_sess',String(ts));}catch(e){}
+      }
+    }
+    if(r&&r.length){
+      rows=r;if(fd)fDate=fd;
+      try{localStorage.setItem('gp_rows',JSON.stringify(rows));localStorage.setItem('gp_fdate',fDate);}catch(e){}
+      renderTable();
+    }
+  });
 }
 
 // ── IMPORT ──
@@ -927,6 +948,8 @@ function doImport(){
       if(rows.length)renderTable();
     }
   }catch(e){}
+  // then refresh from Firebase (so a device that never imported still gets the data)
+  if(typeof initImportPage==='function')initImportPage();
 })();
 
 function renderTable(){
